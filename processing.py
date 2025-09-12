@@ -445,6 +445,50 @@ class DESYContentProcessor:
             return True
         return False
 
+    def extract_list_metadata(self, soup: BeautifulSoup) -> str:
+        content_parts: List[str] = []
+        lists = soup.find_all(['ul', 'ol', 'dl'], class_=['publication-list', 'pub-list'])
+        for list_elem in lists:
+            items = list_elem.find_all(['li', 'dt', 'dd'])
+            if len(items) > 1:
+                list_content: List[str] = []
+                for item in items:
+                    item_text = item.get_text(strip=True)
+                    if item_text and len(item_text) > 10:
+                        if any(k in item_text.lower() for k in ['author', 'title', 'journal', 'doi', 'isbn', 'vol', 'pp', 'year', '20']):
+                            list_content.append(item_text)
+                if len(list_content) > 2:
+                    content_parts.extend(list_content)
+        return "\n".join(content_parts)
+
+    def extract_table_metadata(self, soup: BeautifulSoup) -> str:
+        content_parts: List[str] = []
+        tables = soup.find_all('table')
+        for table in tables:
+            rows = table.find_all('tr')
+            if len(rows) < 2:
+                continue
+            table_text = table.get_text(strip=True).lower()
+            if any(k in table_text for k in ['author', 'title', 'journal', 'publication', 'presenter', 'date', 'conference']):
+                for row in rows:
+                    cells = row.find_all(['td', 'th'])
+                    if len(cells) > 1:
+                        cell_texts = []
+                        for cell in cells:
+                            cell_text = cell.get_text(strip=True)
+                            if cell_text and len(cell_text) > 3:
+                                cell_texts.append(cell_text)
+                        if cell_texts:
+                            content_parts.append(" | ".join(cell_texts))
+            else:
+                for row in rows:
+                    cells = row.find_all(['td', 'th'])
+                    if len(cells) > 1:
+                        cell_texts = [cell.get_text(strip=True) for cell in cells if cell.get_text(strip=True)]
+                        if len(cell_texts) > 1 and any(len(t) > 15 for t in cell_texts):
+                            content_parts.append(" | ".join(cell_texts))
+        return "\n".join(content_parts)
+
     def extract_content(self, soup: BeautifulSoup, use_tags: bool = True) -> Tuple[str, str]:
         if not soup:
             return "", ""
@@ -1149,6 +1193,31 @@ class DESYContentProcessor:
         except Exception as e:
             logger.error(f"Error saving character counts: {e}")
 
+    def _save_progress(self, documents: List[Document], processed_urls: Set[str], error_urls: Dict[str, str], final: bool = False, chunk_type: str = "character") -> None:
+        try:
+            prefix = {"character": "processor_sized_base", "structural": "processor_structural_base", "full_text": "processor_full_text_base"}[chunk_type]
+            filename = f"{prefix}_results_final.json" if final else f"{prefix}_progress_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            data = {
+                'timestamp': datetime.now().isoformat(),
+                'processed_urls_count': len(processed_urls),
+                'documents_count': len(documents),
+                'error_urls_count': len(error_urls),
+                'processed_urls': list(processed_urls),
+                'error_urls': error_urls,
+                'document_metadata': [doc.metadata for doc in documents],
+            }
+            with open(filename, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            text_filename = f"{prefix}_text_chunks_final.json" if final else f"{prefix}_text_chunks_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            text_data = {
+                'timestamp': datetime.now().isoformat(),
+                'text_chunks': [{'content': doc.page_content, 'metadata': doc.metadata} for doc in documents],
+            }
+            with open(text_filename, 'w', encoding='utf-8') as f:
+                json.dump(text_data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"Error saving progress: {e}")
+
     async def process_urls_from_mapping(self, url_map_file: str, batch_size: Optional[int] = None, limit: Optional[int] = None) -> Dict[str, List[Document]]:
         batch_size = batch_size or self.batch_size
         try:
@@ -1245,5 +1314,33 @@ class DESYContentProcessor:
                     await self.playwright.stop()
                 except Exception:
                     pass
+
+    def track_extraction_results(self, url: str, character_success: bool, structural_success: bool, character_count: int = 0, structural_count: int = 0, error_msg: Optional[str] = None) -> None:
+        if not hasattr(self, 'extraction_log'):
+            self.extraction_log = {}
+        self.extraction_log[url] = {
+            'character_chunks_success': character_success,
+            'structural_chunks_success': structural_success,
+            'character_chunks_count': character_count,
+            'structural_chunks_count': structural_count,
+            'timestamp': datetime.now().isoformat(),
+            'error_message': error_msg,
+        }
+
+    def print_extraction_summary(self) -> None:
+        if not hasattr(self, 'extraction_log'):
+            print("No extraction log available")
+            return
+        total_urls = len(self.extraction_log)
+        character_successes = sum(1 for log in self.extraction_log.values() if log['character_chunks_success'])
+        structural_successes = sum(1 for log in self.extraction_log.values() if log['structural_chunks_success'])
+        both_failed = sum(1 for log in self.extraction_log.values() if not log['character_chunks_success'] and not log['structural_chunks_success'])
+        print(f"\n--- EXTRACTION SUMMARY ---")
+        print(f"Total URLs: {total_urls}")
+        print(f"Character method succeeded: {character_successes}/{total_urls}")
+        print(f"Structural method succeeded: {structural_successes}/{total_urls}")
+        print(f"Both methods failed: {both_failed}")
+        print(f"Character-only failures: {total_urls - character_successes}")
+        print(f"Structural-only failures: {total_urls - structural_successes}")
 
 
