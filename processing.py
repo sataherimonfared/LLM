@@ -309,8 +309,12 @@ class DESYContentProcessor:
             #         main_content = found
             #         break
     #Sara: we have to check if this is correct, maybe we should keep the original code  
+            # Prefer the first strong content container found; avoid overriding with weaker selectors
             for selector in main_content_selectors:
-                main_content = soup.select_one(selector)
+                found = soup.select_one(selector)
+                if found is not None:
+                    main_content = found
+                    break
              
             if not main_content:
                 main_content = soup.body or soup
@@ -1160,11 +1164,15 @@ class DESYContentProcessor:
         struct_docs: List[Document] = self.create_structure_based_chunks(cleaned_soup, url, depth, detected_language)
         full_docs: List[Document] = []
         if len(content) >= self.MIN_CHUNK_CHARS:
-            # Full-text = one whole-page document per URL (as in notebook)
+            # Notebook's full-text export splits into fixed-size blocks without overlap
             full_metadata = {"source": url, "title": title, "depth": depth, "language": detected_language, "chunk_type": "full_text"}
-            content_hash = hashlib.md5(content.encode()).hexdigest()
-            self.add_to_processed_hashes(content_hash)
-            full_docs = [Document(page_content=content, metadata=full_metadata)]
+            full_docs = self.create_full_text_chunks(content, full_metadata, chunk_type="full_text")
+            # Track content hash once per page for cross-method dedup parity
+            try:
+                content_hash = hashlib.md5(content.encode()).hexdigest()
+                self.add_to_processed_hashes(content_hash)
+            except Exception:
+                pass
 
 
         all_docs = char_docs + struct_docs + full_docs
