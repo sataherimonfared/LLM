@@ -303,8 +303,15 @@ class DESYContentProcessor:
                 'div[class*="content"]', 'div[class*="text"]', 'div[class*="body"]',
                 'div[class*="page"]', 'div[class*="container"]', 'center'
             ]
+            # for selector in main_content_selectors:
+            #     found = soup.select_one(selector)
+            #     if found is not None:
+            #         main_content = found
+            #         break
+    #Sara: we have to check if this is correct, maybe we should keep the original code  
             for selector in main_content_selectors:
-                main_content = soup.select_one(selector) or main_content
+                main_content = soup.select_one(selector)
+             
             if not main_content:
                 main_content = soup.body or soup
 
@@ -656,6 +663,7 @@ class DESYContentProcessor:
                     next_start = word_start + 1 if word_start != -1 and word_start < end else ideal_next_start
                 start = next_start
             return chunks
+        # NOTE: Match notebook behavior: split on original input text, not cleaned
         texts = split_text_by_size(text, self.chunk_size, self.chunk_overlap, self.MIN_CHUNK_CHARS)
         section_title = metadata.get("section_title", "")
         section_level = metadata.get("section_level", 0)
@@ -1152,10 +1160,13 @@ class DESYContentProcessor:
         struct_docs: List[Document] = self.create_structure_based_chunks(cleaned_soup, url, depth, detected_language)
         full_docs: List[Document] = []
         if len(content) >= self.MIN_CHUNK_CHARS:
+            # Full-text = one whole-page document per URL (as in notebook)
             full_metadata = {"source": url, "title": title, "depth": depth, "language": detected_language, "chunk_type": "full_text"}
             content_hash = hashlib.md5(content.encode()).hexdigest()
             self.add_to_processed_hashes(content_hash)
             full_docs = [Document(page_content=content, metadata=full_metadata)]
+
+
         all_docs = char_docs + struct_docs + full_docs
         if all_docs:
             self.add_to_processed_urls(url)

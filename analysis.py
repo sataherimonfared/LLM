@@ -82,12 +82,15 @@ def export_merged_results(merged: Dict[str, Any], prefix: str = "processor") -> 
         }
 
     write_json("page_character_counts_final.json", format_character_counts(merged.get("character_counts_data", {})))
+    # structural
     write_json(f"{prefix}_structural_base_text_chunks_final.json", format_text_chunks(merged["structural_chunks"]))
     write_json(f"{prefix}_structural_base_results_final.json", merged["structural_chunks"]["document_metadata"])
-    write_json(f"{prefix}_sized_base_text_chunks_final.json", format_text_chunks(merged["full_text_chunks"]))
-    write_json(f"{prefix}_sized_base_results_final.json", merged["full_text_chunks"]["document_metadata"])
-    write_json(f"{prefix}_character_base_text_chunks_final.json", format_text_chunks(merged["character_chunks"]))
-    write_json(f"{prefix}_character_base_results_final.json", merged["character_chunks"]["document_metadata"])
+    # full text
+    write_json(f"{prefix}_full_text_base_text_chunks_final.json", format_text_chunks(merged["full_text_chunks"]))
+    write_json(f"{prefix}_full_text_base_results_final.json", merged["full_text_chunks"]["document_metadata"])
+    # size/character-based (notebook naming used 'sized_base' for character)
+    write_json(f"{prefix}_sized_base_text_chunks_final.json", format_text_chunks(merged["character_chunks"]))
+    write_json(f"{prefix}_sized_base_results_final.json", merged["character_chunks"]["document_metadata"])
     write_json(f"{prefix}_processed_urls_final.json", list(merged.get("processed_urls", [])))
     write_json(f"{prefix}_error_urls_final.json", list(merged.get("error_urls", [])))
 
