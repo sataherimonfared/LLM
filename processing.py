@@ -309,13 +309,21 @@ class DESYContentProcessor:
             #         main_content = found
             #         break
     #Sara: we have to check if this is correct, maybe we should keep the original code  
-            # Prefer the first strong content container found; avoid overriding with weaker selectors
+            # # Prefer the first strong content container found; avoid overriding with weaker selectors
+            # for selector in main_content_selectors:
+            #     main_content = soup.select_one(selector)
+                
+
+            # for selector in main_content_selectors:
+            #     found = soup.select_one(selector)
+            #     if found is not None:
+            #         main_content = found
+            #         break
+
             for selector in main_content_selectors:
-                found = soup.select_one(selector)
-                if found is not None:
-                    main_content = found
-                    break
-             
+                main_content = soup.select_one(selector) # or main_content
+
+
             if not main_content:
                 main_content = soup.body or soup
 
@@ -702,6 +710,7 @@ class DESYContentProcessor:
         cleaned_text = self.clean_content(text)
         if not cleaned_text or len(cleaned_text) < self.MIN_CHUNK_CHARS:
             return []
+        
         def split_text_for_full_coverage(t: str, max_size: int) -> List[str]:
             if len(t) <= max_size:
                 return [t]
@@ -1166,13 +1175,17 @@ class DESYContentProcessor:
         if len(content) >= self.MIN_CHUNK_CHARS:
             # Notebook's full-text export splits into fixed-size blocks without overlap
             full_metadata = {"source": url, "title": title, "depth": depth, "language": detected_language, "chunk_type": "full_text"}
-            full_docs = self.create_full_text_chunks(content, full_metadata, chunk_type="full_text")
-            # Track content hash once per page for cross-method dedup parity
-            try:
-                content_hash = hashlib.md5(content.encode()).hexdigest()
-                self.add_to_processed_hashes(content_hash)
-            except Exception:
-                pass
+            # full_docs = self.create_full_text_chunks(content, full_metadata, chunk_type="full_text")
+            # # Track content hash once per page for cross-method dedup parity
+            # try:
+            #     content_hash = hashlib.md5(content.encode()).hexdigest()
+            #     self.add_to_processed_hashes(content_hash)
+            # except Exception:
+            #     pass
+            content_hash = hashlib.md5(content.encode()).hexdigest()
+            self.add_to_processed_hashes(content_hash)
+            full_docs = [Document(page_content=content, metadata=full_metadata)]
+
 
 
         all_docs = char_docs + struct_docs + full_docs
