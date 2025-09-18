@@ -1,0 +1,15 @@
+git status
+git add *.py
+git commit -m "Update Jupyter notebook with latest changes"
+git push origin main
+
+
+git show --color --stat
+
+
+
+=====================
+. ~/.bashrc
+mamba activate openai
+
+
