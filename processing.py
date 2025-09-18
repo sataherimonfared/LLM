@@ -290,44 +290,34 @@ class DESYContentProcessor:
             text = pattern.sub('', text)
         return text
 
+
     def clean_content(self, text: str) -> str:
+        apply_patterns: bool = True
+        apply_selectors: bool = True
         if not text:
             return ""
         try:
             soup = BeautifulSoup(text, 'html.parser')
-            main_content = None
+    
             main_content_selectors = [
                 'main', 'article', 'section[class*="content"]',
-                'div[class*="main-content"]', 'div[class*="content-section"]', 'div[class*="text-block"]',
-                'div[id="content"]', 'div[id="main"]', 'div[id="bodyContent"]',
-                'div[class*="content"]', 'div[class*="text"]', 'div[class*="body"]',
-                'div[class*="page"]', 'div[class*="container"]', 'center'
+                'div[class*="main-content"]', 'div[class*="content-section"]',
+                'div[class*="text-block"]', 'div[id="content"]', 'div[id="main"]',
+                'div[id="bodyContent"]', 'div[class*="content"]', 'div[class*="text"]',
+                'div[class*="body"]', 'div[class*="page"]', 'div[class*="container"]',
+                'center'
             ]
-            # for selector in main_content_selectors:
-            #     found = soup.select_one(selector)
-            #     if found is not None:
-            #         main_content = found
-            #         break
-    #Sara: we have to check if this is correct, maybe we should keep the original code  
-            # # Prefer the first strong content container found; avoid overriding with weaker selectors
-            # for selector in main_content_selectors:
-            #     main_content = soup.select_one(selector)
-                
-
-            # for selector in main_content_selectors:
-            #     found = soup.select_one(selector)
-            #     if found is not None:
-            #         main_content = found
-            #         break
-
+    
+            main_content = None
             for selector in main_content_selectors:
-                main_content = soup.select_one(selector) # or main_content
-
-
+                found = soup.select_one(selector)
+                if found is not None:
+                    main_content = found
+                    break
             if not main_content:
                 main_content = soup.body or soup
-
-            selectors = [
+    
+            cleanup_selectors = [
                 'div[id="overall"]', 'div[class="wrapper"]', 'header[id="header"]',
                 'div[id="mobile_menu_header"]', 'div[id="mobile_menu"]', 'div[id="mobile_dropdown"]',
                 'div[id="top"]', 'div[id="logoarea"]', 'div[id="topleft"]', 'div[id="topright"]',
@@ -372,34 +362,42 @@ class DESYContentProcessor:
                 'div[id="page-footer"]',
                 'ul[id="footer-nav"]',
             ]
-            for selector in selectors:
-                elements = set(main_content.select(selector)) | set(soup.select(selector))
-                for element in elements:
-                    if getattr(element, 'extractable', True):
-                        element.decompose()
+    
+            if apply_selectors:
+                for selector in cleanup_selectors:
+                    elements = set(main_content.select(selector)) | set(soup.select(selector))
+                    for element in elements:
+                        if getattr(element, 'extractable', True):
+                            element.decompose()
+    
             for li in main_content.find_all("li"):
                 if not li.find_parent(id="content"):
                     li.decompose()
+    
             doi_href_pattern = re.compile(r'(doi\.org|journals\.aps\.org|dx\.doi\.org|DOI:)', re.IGNORECASE)
             for a_tag in main_content.find_all('a', href=True):
                 if doi_href_pattern.search(a_tag['href']):
                     a_tag.decompose()
-            text = str(main_content)
-        except Exception:
-            text = re.sub(r'<[^>]+>', ' ', text)
-
-        text = self._apply_pattern_group(text, self.critical_patterns, "CRITICAL")
-        text = self._apply_pattern_group(text, self.high_priority_patterns, "HIGH")
-        text = self._apply_pattern_group(text, self.medium_priority_patterns, "MEDIUM")
-        text = self._apply_pattern_group(text, self.low_priority_patterns, "LOW")
-        text = self._apply_pattern_group(text, self.specialized_patterns, "SPECIALIZED")
-        text = self._apply_pattern_group(text, self.cleanup_patterns, "CLEANUP")
-
-        if '<' in text and '>' in text:
-            try:
+    
+            #text = str(main_content) #raw HTML string
+            text = main_content.get_text(separator=' ', strip=True)  #Extracts only the visible text from the HTML
+            
+    
+            if apply_patterns:
+                text = self._apply_pattern_group(text, self.critical_patterns, "CRITICAL")
+                text = self._apply_pattern_group(text, self.high_priority_patterns, "HIGH")
+                text = self._apply_pattern_group(text, self.medium_priority_patterns, "MEDIUM")
+                text = self._apply_pattern_group(text, self.low_priority_patterns, "LOW")
+                text = self._apply_pattern_group(text, self.specialized_patterns, "SPECIALIZED")
+                text = self._apply_pattern_group(text, self.cleanup_patterns, "CLEANUP")
+                text = self._apply_pattern_group(text, self.text_cleanup_patterns, "TEXT_CLEANUP")
+    
+            if '<' in text and '>' in text:
                 soup = BeautifulSoup(text, 'html.parser')
+    
                 for el in soup.find_all(text=re.compile(r'©\s*\d{4}\s*Deutsches\s*Elektronen-Synchrotron\s*DESY', re.I)):
                     el.replace_with('')
+    
                 for el in soup.find_all(text=True):
                     text_content = (el.string or "").lower()
                     for pattern in self.cookie_text_patterns:
@@ -411,15 +409,18 @@ class DESYContentProcessor:
                                     break
                                 parent = parent.parent if parent else None
                             break
+    
                 text = soup.get_text(separator=' ', strip=True)
-            except Exception:
-                text = re.sub(r'<[^>]+>', ' ', text)
+    
+            text = self.whitespace_pattern.sub(' ', text)
+            return text.strip()
+    
+        except Exception:
+            return re.sub(r'<[^>]+>', ' ', text)
 
-        text = self._apply_pattern_group(text, self.text_cleanup_patterns, "TEXT_CLEANUP")
-        text = self.whitespace_pattern.sub(' ', text)
 
-        doi_pattern = re.compile(r'\b10\.\d{4,9}/[-._;()/:A-Z0-9]+\b', re.IGNORECASE)
-        seen_dois: Set[str] = set()
+
+
 
         def replace_doi(match: re.Match) -> str:
             doi = match.group(0)

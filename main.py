@@ -3,6 +3,8 @@ Main entrypoint to run the scraping pipeline.
 
 Usage:
   python main.py --url-map Zero_text_scraped_urls.json --max-depth 2 --batch-size 100 --limit 1000
+  nohup python main.py --url-map desy_url_map_20250425_155033_urls=200_000_dedup.json --max-depth 2 --batch-size 100 --limit 1000 > scraper.log 2>&1 &
+
 """
 
 from __future__ import annotations
@@ -70,68 +72,17 @@ def merge_url_maps_with_priority(files_to_scrape: List[str]) -> List[str]:
     return merged
 
 
-# def process_mapped_urls(url_map_file: str, max_depth: int, batch_size: int, limit: int | None):
-#     async def _run():
-#         # Call the processor ONCE for the file (match notebook behavior to avoid duplicates)
-#         processor = DESYContentProcessor(max_depth=max_depth, chunk_size=500, chunk_overlap=75)
-#         results = await processor.process_urls_from_mapping(url_map_file, batch_size=batch_size, limit=limit)
-
-#         # Build the same merged structure shape as the notebook
-#         character_urls = set(doc.metadata.get('source', '') for doc in results['character_chunks'])
-#         structural_urls = set(doc.metadata.get('source', '') for doc in results['structural_chunks'])
-#         full_text_urls = set(doc.metadata.get('source', '') for doc in results['full_text_chunks'])
-
-#         def build_chunk_metadata(docs):
-#             return [
-#                 {
-#                     'url': doc.metadata.get('source', ''),
-#                     'chunk_index': i,
-#                     'character_count': len(doc.page_content),
-#                     'metadata': doc.metadata,
-#                 }
-#                 for i, doc in enumerate(docs)
-#             ]
-
-#         character_counts_data = {
-#             'character_chunks': build_chunk_metadata(results['character_chunks']),
-#             'structural_chunks': build_chunk_metadata(results['structural_chunks']),
-#             'full_text_chunks': build_chunk_metadata(results['full_text_chunks']),
-#         }
-
-#         batch_result = {
-#             'character_chunks': {
-#                 'text_chunks': [doc.page_content for doc in results['character_chunks']],
-#                 'document_metadata': [doc.metadata for doc in results['character_chunks']],
-#             },
-#             'structural_chunks': {
-#                 'text_chunks': [doc.page_content for doc in results['structural_chunks']],
-#                 'document_metadata': [doc.metadata for doc in results['structural_chunks']],
-#             },
-#             'full_text_chunks': {
-#                 'text_chunks': [doc.page_content for doc in results['full_text_chunks']],
-#                 'document_metadata': [doc.metadata for doc in results['full_text_chunks']],
-#             },
-#             'character_counts_data': character_counts_data,
-#             'processed_urls': list(set(list(character_urls | structural_urls | full_text_urls))),
-#             'error_urls': list(processor.error_urls.keys()),
-#             'url_stats': {
-#                 'total_character_urls': len(character_urls),
-#                 'total_structural_urls': len(structural_urls),
-#                 'total_full_text_urls': len(full_text_urls),
-#                 'redirected_urls': processor.redirected_urls,
-#             },
-#         }
-#         final_result = merge_batch_results([batch_result])
-#         return final_result
-#     return asyncio.run(_run())
-
 def process_mapped_urls(url_map_file: str, max_depth: int, batch_size: int, limit: int | None):
     async def _run():
-        # Call the processor ONCE for the file (match notebook behavior)
+        # Call the processor ONCE for the file (match notebook behavior to avoid duplicates)
         processor = DESYContentProcessor(max_depth=max_depth, chunk_size=500, chunk_overlap=75)
         results = await processor.process_urls_from_mapping(url_map_file, batch_size=batch_size, limit=limit)
 
-        # Build batch result in the same structure the notebook uses
+        # Build the same merged structure shape as the notebook
+        character_urls = set(doc.metadata.get('source', '') for doc in results['character_chunks'])
+        structural_urls = set(doc.metadata.get('source', '') for doc in results['structural_chunks'])
+        full_text_urls = set(doc.metadata.get('source', '') for doc in results['full_text_chunks'])
+
         def build_chunk_metadata(docs):
             return [
                 {
@@ -142,6 +93,12 @@ def process_mapped_urls(url_map_file: str, max_depth: int, batch_size: int, limi
                 }
                 for i, doc in enumerate(docs)
             ]
+
+        character_counts_data = {
+            'character_chunks': build_chunk_metadata(results['character_chunks']),
+            'structural_chunks': build_chunk_metadata(results['structural_chunks']),
+            'full_text_chunks': build_chunk_metadata(results['full_text_chunks']),
+        }
 
         batch_result = {
             'character_chunks': {
@@ -156,19 +113,20 @@ def process_mapped_urls(url_map_file: str, max_depth: int, batch_size: int, limi
                 'text_chunks': [doc.page_content for doc in results['full_text_chunks']],
                 'document_metadata': [doc.metadata for doc in results['full_text_chunks']],
             },
-            'character_counts_data': {
-                'character_chunks': build_chunk_metadata(results['character_chunks']),
-                'structural_chunks': build_chunk_metadata(results['structural_chunks']),
-                'full_text_chunks': build_chunk_metadata(results['full_text_chunks']),
-            },
-            'processed_urls': list({doc.metadata.get('source','') for doc in (results['character_chunks'] + results['structural_chunks'] + results['full_text_chunks'])}),
+            'character_counts_data': character_counts_data,
+            'processed_urls': list(set(list(character_urls | structural_urls | full_text_urls))),
             'error_urls': list(processor.error_urls.keys()),
             'url_stats': {
+                'total_character_urls': len(character_urls),
+                'total_structural_urls': len(structural_urls),
+                'total_full_text_urls': len(full_text_urls),
                 'redirected_urls': processor.redirected_urls,
             },
         }
-        return batch_result
+        final_result = merge_batch_results([batch_result])
+        return final_result
     return asyncio.run(_run())
+
 
 
 def parse_args() -> argparse.Namespace:
@@ -205,5 +163,4 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
-
 
