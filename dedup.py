@@ -1,9 +1,9 @@
-import os, json
-from urllib.parse import urlparse, urlunparse, parse_qsl
+import os
+import json
+from urllib.parse import urlparse, urlunparse
 
 REDIRECT_FILE = "redirected_urls.json"
 
-# CONFIG: enable canonicalization only where you trust it
 SCHEME_INSENSITIVE_HOSTS = {
     "photon-science.desy.de",
     "www.desy.de",
@@ -16,30 +16,33 @@ WWW_ALIAS_HOSTS = {
 TRAILING_SLASH_COLLAPSE = True
 INDEX_PAGES = {"/index.html", "/index_ger.html", "/index_eng.html", "/index_en.html"}
 
-# Query-insensitive paths per host (only strip query for these)
-QUERY_INSENSITIVE = {
-    # "petra4.desy.de": {"/aktuelles/index_ger.html"},  # enable ONLY if you want ?year=... treated as duplicate
-}
+QUERY_INSENSITIVE = {}
 
 def load_json_any(path):
     with open(path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
 def detect_format(data):
-    if isinstance(data, dict) and 'urls_by_depth' in data: return 'urls_by_depth'
-    if isinstance(data, dict): return 'dict_map'
-    if isinstance(data, list): return 'list'
+    if isinstance(data, dict) and 'urls_by_depth' in data:
+        return 'urls_by_depth'
+    if isinstance(data, dict):
+        return 'dict_map'
+    if isinstance(data, list):
+        return 'list'
     raise ValueError("Unsupported JSON structure")
 
 def iter_urls(data):
     fmt = detect_format(data)
     if fmt == 'urls_by_depth':
         for _, urls in data['urls_by_depth'].items():
-            for u in urls: yield u
+            for u in urls:
+                yield u
     elif fmt == 'dict_map':
-        for u in data.keys(): yield u
+        for u in data.keys():
+            yield u
     else:
-        for u in data: yield u
+        for u in data:
+            yield u
 
 def rebuild_same_shape(original, kept_urls):
     fmt = detect_format(original)
@@ -52,60 +55,56 @@ def rebuild_same_shape(original, kept_urls):
     return [u for u in original if u in kept_urls]
 
 def build_redirect_map(path=REDIRECT_FILE):
-    if not os.path.exists(path): return {}
+    if not os.path.exists(path):
+        return {}
     try:
-        m = load_json_any(path)  # {source: final}
+        m = load_json_any(path)
         return {k: v for k, v in m.items() if k and v}
     except Exception:
         return {}
 
 def resolve_final(u, redir_map, cache):
-    if u in cache: return cache[u]
+    if u in cache:
+        return cache[u]
     seen = set()
     cur = u
     while cur not in seen and cur in redir_map and redir_map[cur] != cur:
         seen.add(cur)
         cur = redir_map[cur]
-    for v in seen: cache[v] = cur
+    for v in seen:
+        cache[v] = cur
     cache[u] = cur
     return cur
 
 def canonicalize(u):
-    # Returns (canon_url, reason_set) where reason_set are canonicalization reasons applied
     reasons = set()
     try:
         p = urlparse(u)
         scheme, netloc, path, params, query, frag = p.scheme, p.netloc, p.path or "", p.params, p.query, p.fragment
         host = netloc.lower()
 
-        # Scheme-insensitive (http/https) only for whitelisted hosts
         if host in SCHEME_INSENSITIVE_HOSTS and scheme.lower() in ("http", "https"):
             if scheme != "https":
                 scheme = "https"
                 reasons.add("canonical_equivalent_scheme")
 
-        # www alias handling only for whitelisted hosts
         if host in WWW_ALIAS_HOSTS:
             new_host = host.replace("www.", "")
             if new_host != host:
                 host = new_host
                 reasons.add("canonical_equivalent_www")
 
-        # collapse common index pages
         for idx in INDEX_PAGES:
             if path.lower().endswith(idx):
                 path = path[: -len(idx)] or "/"
                 reasons.add("canonical_equivalent_index")
                 break
 
-        # trailing slash collapse
         if TRAILING_SLASH_COLLAPSE and path != "/" and path.endswith("/"):
             path = path[:-1]
-            reasons.add("canonical_equivalent_index")  # reuse index-like reason
+            reasons.add("canonical_equivalent_index")
 
-        # query-insensitive only for specific (host, path) pairs
         if host in QUERY_INSENSITIVE and path in QUERY_INSENSITIVE[host] and query:
-            # strip query entirely
             query = ""
             reasons.add("canonical_equivalent_querystrip")
 
@@ -113,43 +112,51 @@ def canonicalize(u):
     except Exception:
         return u, reasons
 
-def dedupe_secondary_with_redirects_and_canon(primary_path, secondary_path):
-    primary = load_json_any(primary_path)
+def dedupe_secondary_with_redirects_and_canon(secondary_path, primary_path=None):
     secondary = load_json_any(secondary_path)
+    primary = load_json_any(primary_path) if primary_path else None
 
     redir_map = build_redirect_map()
     final_cache = {}
 
     def final_of(u):
-        # First: redirect sink (recorded only)
         f = resolve_final(u, redir_map, final_cache)
-        # Then: canonicalize the final (recorded) URL according to approved rules
-        fc, _ = canonicalize(f)
-        return fc
+        fc, canon_reasons = canonicalize(f)
+        return fc, canon_reasons
 
-    # Seed representatives from primary
     final_to_rep = {}
-    for u in iter_urls(primary):
-        fu = final_of(u)
-        final_to_rep.setdefault(fu, u)
+    if primary:
+        for u in iter_urls(primary):
+            fu, _ = final_of(u)
+            final_to_rep.setdefault(fu, u)
 
     kept = []
-    removed_pairs = []  # {duplicate, kept, reason}
+    removed_pairs = []
     seen_finals_local = {}
 
     for u in iter_urls(secondary):
-        fu = final_of(u)
+        fu, canon_reasons = final_of(u)
 
         if fu in final_to_rep:
             kept_rep = final_to_rep[fu]
             reason = "redirect_to_same_final_as_primary" if u != kept_rep else "exact_match_primary"
-            removed_pairs.append({"duplicate": u, "kept": kept_rep, "reason": reason})
+            removed_pairs.append({
+                "duplicate": u,
+                "kept": kept_rep,
+                "reason": reason,
+                "canonicalization": list(canon_reasons)
+            })
             continue
 
         if fu in seen_finals_local:
             kept_rep = seen_finals_local[fu]
             reason = "redirect_to_same_final_within_secondary" if u != kept_rep else "exact_match_within_secondary"
-            removed_pairs.append({"duplicate": u, "kept": kept_rep, "reason": reason})
+            removed_pairs.append({
+                "duplicate": u,
+                "kept": kept_rep,
+                "reason": reason,
+                "canonicalization": list(canon_reasons)
+            })
             continue
 
         kept.append(u)
@@ -166,12 +173,27 @@ def dedupe_secondary_with_redirects_and_canon(primary_path, secondary_path):
     with open(report_path, 'w', encoding='utf-8') as f:
         json.dump(removed_pairs, f, ensure_ascii=False, indent=2)
 
-    print(f"✅ Deduplicated written to: {out_path}")
+    print(f"\n✅ Deduplicated written to: {out_path}")
     print(f"📝 Duplicate pairs report: {report_path}")
     print(f"   Kept: {len(kept)} | Removed: {len(removed_pairs)}")
 
-# Run once before scraping
+    print("\n🔍 Removed URLs and reasons:")
+    for entry in removed_pairs[:20]:
+        print(f"- ❌ {entry['duplicate']} → kept as {entry['kept']} | reason: {entry['reason']}")
+        if entry.get("canonicalization"):
+            print(f"    Canonicalization applied: {entry['canonicalization']}")
+    if len(removed_pairs) > 20:
+        print(f"...and {len(removed_pairs) - 20} more removed URLs. See full report in: {report_path}\n")
+
+# ✅ Run with one file (self-deduplication)
 dedupe_secondary_with_redirects_and_canon(
-    primary_path="Zero_text_scraped_urls.json",
-    secondary_path="desy_url_map_20250425_155033_urls=200_000.json",
+    secondary_path="desy_url_map_20250425_155033_urls=200_000.json"
 )
+
+# ✅ Or run with two files
+# dedupe_secondary_with_redirects_and_canon(
+#     primary_path="Zero_text_scraped_urls.json",
+#     secondary_path="desy_url_map_20250425_155033_urls=200_000.json"
+# )
+
+

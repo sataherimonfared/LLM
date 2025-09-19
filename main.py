@@ -44,32 +44,36 @@ def batch_urls(urls: List[str], batch_size: int):
         yield urls[i:i + batch_size]
 
 
-def extract_all_urls(url_map: Dict[str, Any]) -> List[str]:
+
+
+def extract_urls_with_depth(url_map: Dict[str, Any]) -> Dict[str, int]:
+    url_depth_map: Dict[str, int] = {}
     if isinstance(url_map, dict) and 'urls_by_depth' in url_map:
-        ordered_depths = sorted((int(k), v) for k, v in url_map['urls_by_depth'].items() if str(k).isdigit())
-        urls: List[str] = []
-        for _, lst in ordered_depths:
-            urls.extend(lst)
-        return urls
-    if isinstance(url_map, dict):
-        return list(url_map.keys())
-    return list(url_map)
+        for depth_str, urls in url_map['urls_by_depth'].items():
+            if depth_str.isdigit():
+                depth = int(depth_str)
+                for url in urls:
+                    # Keep the shallowest depth if duplicates exist
+                    if url not in url_depth_map or depth < url_depth_map[url]:
+                        url_depth_map[url] = depth
+    return url_depth_map
 
 
-def merge_url_maps_with_priority(files_to_scrape: List[str]) -> List[str]:
-    seen: set[str] = set()
-    merged: List[str] = []
+
+
+def merge_url_maps_with_priority(files_to_scrape: List[str]) -> Dict[str, int]:
+    merged: Dict[str, int] = {}
     for path in files_to_scrape:
         try:
             data = load_mapping(path)
         except FileNotFoundError:
             continue
-        urls = extract_all_urls(data)
-        for u in urls:
-            if u not in seen:
-                seen.add(u)
-                merged.append(u)
+        url_depth_map = extract_urls_with_depth(data)
+        for url, depth in url_depth_map.items():
+            if url not in merged or depth < merged[url]:
+                merged[url] = depth  # Keep the shallowest depth
     return merged
+
 
 
 def process_mapped_urls(url_map_file: str, max_depth: int, batch_size: int, limit: int | None):
@@ -144,17 +148,20 @@ def main() -> None:
     configure_logging(args.verbose)
     # Merge multiple url maps with first-file priority, then limit
     files_to_scrape: List[str] = list(args.url_map)
-    merged_urls = merge_url_maps_with_priority(files_to_scrape)
+
+    url_depth_map = merge_url_maps_with_priority(files_to_scrape)
     if args.limit is not None:
-        merged_urls = merged_urls[: args.limit]
+        url_depth_map = dict(list(url_depth_map.items())[:args.limit])
 
-    # Create a transient in-memory url_map structure like the notebook expects
-    url_map = {u: {} for u in merged_urls}
+    # Create a structured url_map with depth info
+    url_map = {url: {'depth': depth} for url, depth in url_depth_map.items()}
 
-    # Write a temporary file or pass directly by adapting processor (we adapt by dumping to a temp path)
     tmp_path = 'merged_url_map_temp.json'
     with open(tmp_path, 'w', encoding='utf-8') as f:
         json.dump(url_map, f, ensure_ascii=False)
+
+
+
 
     result = process_mapped_urls(tmp_path, args.max_depth, args.batch_size, None)
     export_merged_results(result, prefix="desy_final")
@@ -163,4 +170,5 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
+
 
